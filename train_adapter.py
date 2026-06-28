@@ -253,12 +253,8 @@ def generate_adapted(prompt, max_tokens=25):
 
     all_ids = generated.copy()
 
-    # Precompute RoPE embeddings from the model's rotary_emb
-    rotary_emb = model.model.layers[0].self_attn.rotary_emb
-
     for step in range(len(generated) + max_tokens):
         tid = generated[step] if step < len(generated) else next_token
-        pos = torch.tensor([step])
 
         with torch.no_grad():
             embed = model.model.embed_tokens(torch.tensor([[tid]])).squeeze()
