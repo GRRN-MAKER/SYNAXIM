@@ -30,7 +30,7 @@
 
 ## What is SYNAXIM?
 
-SYNAXIM is a **standalone inference engine** that runs Large Language Models **without PyTorch, without the Transformers library, and without KV-Cache**. It replaces the standard Transformer inference paradigm with a **Continuous Associative State Machine** — a persistent memory matrix `M` that maintains O(1) fixed-size state regardless of sequence length.
+SYNAXIM is a **standalone inference engine** that runs Large Language Models **without PyTorch, without the Transformers library, and without KV-Cache**. It replaces the standard Transformer inference paradigm with a **Continuous Associative State Machine** a persistent memory matrix `M` that maintains O(1) fixed-size state regardless of sequence length.
 
 **Attention ≡ Memory**: Instead of splitting data into a disjointed context window, SYNAXIM brings the tokens back into a **continuous, assembled, persistent state matrix**. This is not a wrapper — it is a completely independent execution engine with its own proprietary `.symb` binary weight format.
 
