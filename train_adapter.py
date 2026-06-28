@@ -253,8 +253,12 @@ def generate_adapted(prompt, max_tokens=25):
 
     all_ids = generated.copy()
 
+    # Precompute RoPE embeddings from the model's rotary_emb
+    rotary_emb = model.model.layers[0].self_attn.rotary_emb
+
     for step in range(len(generated) + max_tokens):
         tid = generated[step] if step < len(generated) else next_token
+        pos = torch.tensor([step])
 
         with torch.no_grad():
             embed = model.model.embed_tokens(torch.tensor([[tid]])).squeeze()
@@ -274,15 +278,42 @@ def generate_adapted(prompt, max_tokens=25):
                 mlp_out = layer.mlp(hm).float()
                 h = h + mlp_out
 
-            # Remaining layers (standard forward, no adapter)
+            # Remaining layers: use symbiotic gate too (with default params)
+            # since position_embeddings are needed for standard attn
             for li in range(TRAIN_LAYERS, n_layers):
                 layer = model.model.layers[li]
-                # Use the model's own attention for untrained layers
                 h_n = layer.input_layernorm(h).float()
-                attn_out = layer.self_attn(h_n.unsqueeze(0) if h_n.dim() == 2 else h_n)[0]
-                if attn_out.dim() == 3:
-                    attn_out = attn_out.squeeze(0)
-                h = h + attn_out.float()
+                q = layer.self_attn.q_proj(h_n).float()
+                k = layer.self_attn.k_proj(h_n).float()
+                v = layer.self_attn.v_proj(h_n).float()
+                W_o = layer.self_attn.o_proj.weight.float()
+
+                # Simple symbiotic gate (no adapter, fixed params)
+                seq_len = h_n.shape[0]
+                k_exp = k.view(seq_len, n_kv, head_dim)
+                v_exp = v.view(seq_len, n_kv, head_dim)
+                if n_kv < n_heads:
+                    k_exp = k_exp.repeat_interleave(n_heads // n_kv, dim=1)
+                    v_exp = v_exp.repeat_interleave(n_heads // n_kv, dim=1)
+                k_full = k_exp.reshape(seq_len, -1)
+                v_full = v_exp.reshape(seq_len, -1)
+                q_flat = q.reshape(seq_len, -1)
+
+                for t in range(seq_len):
+                    k_t = k_full[t]
+                    v_t = v_full[t]
+                    k_norm = k_t / (k_t.norm() + 1e-8)
+                    v_norm = v_t / (v_t.norm() + 1e-8) * h_n[t].norm()
+                    # Fixed gate of 0.9 (high retention for untrained layers)
+                    if not hasattr(generate_adapted, f'_M_{li}'):
+                        setattr(generate_adapted, f'_M_{li}', torch.zeros(D, D))
+                    M_cur = getattr(generate_adapted, f'_M_{li}')
+                    M_cur = 0.9 * M_cur + 0.1 * torch.outer(k_norm, v_norm)
+                    setattr(generate_adapted, f'_M_{li}', M_cur)
+
+                attn_out = (q_flat @ getattr(generate_adapted, f'_M_{li}')) @ W_o.T
+                attn_out = attn_out * 0.1  # Dampen untrained layers
+                h = h + attn_out
                 hm = layer.post_attention_layernorm(h).float()
                 mlp_out = layer.mlp(hm).float()
                 h = h + mlp_out
@@ -307,6 +338,10 @@ prompts = [
 ]
 
 for p in prompts:
+    # Reset untrained layer M matrices between prompts
+    for li in range(TRAIN_LAYERS, n_layers):
+        if hasattr(generate_adapted, f'_M_{li}'):
+            setattr(generate_adapted, f'_M_{li}', torch.zeros(D, D))
     result = generate_adapted(p, max_tokens=25)
     print(f"  '{p}' → '{result}'")
 
