@@ -169,6 +169,29 @@ class SymbioticConverter:
                     "Install PyTorch to enable conversion: pip install torch"
                 )
 
+    @staticmethod
+    def _iter_safetensors(filepath: str):
+        """
+        Iterate over tensors in a safetensors file ONE AT A TIME.
+        Yields (key, tensor_as_float32) pairs.
+        
+        This is memory-efficient: only one tensor is in RAM at a time.
+        For bfloat16 models, uses PyTorch to convert each tensor individually.
+        """
+        from safetensors import safe_open
+        try:
+            with safe_open(filepath, framework="numpy") as f:
+                for key in f.keys():
+                    t = f.get_tensor(key)
+                    yield key, t.astype(np.float32) if t.dtype != np.float32 else t
+        except TypeError:
+            # bfloat16 — stream via PyTorch one tensor at a time
+            import torch
+            with safe_open(filepath, framework="pt") as f:
+                for key in f.keys():
+                    t = f.get_tensor(key).float().numpy()
+                    yield key, t
+
     def _resolve_source(self, source: str) -> str:
         """Resolve a HF model ID or local path to a directory."""
         if os.path.isdir(source):
@@ -322,9 +345,8 @@ class SymbioticConverter:
         total_packed = 0
 
         for st_file in tqdm(st_files, desc="Converting shards", disable=not self.verbose):
-            # Try NumPy first; if bfloat16 (not supported by NumPy), load via PyTorch
-            tensors_dict = self._load_safetensors(str(st_file))
-            for key, tensor in tensors_dict.items():
+            # Stream one tensor at a time to minimize RAM usage
+            for key, tensor in self._iter_safetensors(str(st_file)):
                     # Ensure float32 for quantization
                     if tensor.dtype != np.float32:
                         tensor = tensor.astype(np.float32)
