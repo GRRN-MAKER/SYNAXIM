@@ -31,6 +31,8 @@ dependencies = [
     "sentencepiece>=0.1.99",
     "tiktoken>=0.5",
     "tqdm>=4.65",
+    "huggingface-hub>=0.20",
+    "tokenizers>=0.15",
 ]
 
 [project.optional-dependencies]

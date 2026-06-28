@@ -199,3 +199,4 @@ class GRRNTokenizer:
         if add_generation_prompt:
             parts.append("<|im_start|>assistant\n")
         return "\n".join(parts)
+        return "\n".join(parts)

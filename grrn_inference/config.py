@@ -138,7 +138,7 @@ class SymbioticConfig:
         """Get the attention type for a specific layer."""
         if self.layer_types and layer_idx < len(self.layer_types):
             return self.layer_types[layer_idx]
-        return "linear_attention"
+        return "full_attention"
 
     def get_layer_dir(self, layer_idx: int) -> str:
         """Get the directory name for a specific layer's weights."""

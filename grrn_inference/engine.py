@@ -57,14 +57,14 @@ class SymbioticStateEngine:
         V = cfg.vocab_size
 
         # ── Load Global Weights ──
-        self.embeddings = self._load_fp16(
+        self.embeddings = self._load_global_weight(
             os.path.join(model_dir, cfg.embedding_file), (V, D)
         )
         
         # LM head may be tied to embeddings
         lm_head_path = os.path.join(model_dir, cfg.lm_head_file)
         if os.path.exists(lm_head_path):
-            self.lm_head = self._load_fp16(lm_head_path, (D, V))
+            self.lm_head = self._load_global_weight(lm_head_path, (D, V))
         elif cfg.tie_word_embeddings:
             self.lm_head = self.embeddings.T.copy()
         else:
@@ -91,6 +91,10 @@ class SymbioticStateEngine:
             np.zeros((D, D), dtype=np.float32) for _ in range(cfg.num_layers)
         ]
 
+        # ── No KV Cache — SYNAXIM uses O(1) M matrix for ALL layers ──
+        # Full attention layers use the M matrix as associative memory,
+        # not a growing KV cache. This is the core SYNAXIM paradigm.
+
         # ── RoPE Precomputation ──
         self._rope_cos, self._rope_sin = self._precompute_rope(
             cfg.head_dim, cfg.max_position_embeddings, cfg.rope_theta
@@ -105,6 +109,22 @@ class SymbioticStateEngine:
         """Load a flat FP16 binary file into a float32 array."""
         data = np.fromfile(path, dtype=np.float16)
         return data.reshape(shape).astype(np.float32)
+
+    def _load_global_weight(self, path: str, shape: tuple) -> np.ndarray:
+        """Load a global weight, auto-detecting FP16 vs INT4 format."""
+        file_size = os.path.getsize(path)
+        expected_fp16 = 1
+        for s in shape:
+            expected_fp16 *= s
+        expected_fp16 *= 2  # 2 bytes per FP16
+
+        if file_size == expected_fp16:
+            # FP16 flat file
+            return self._load_fp16(path, shape)
+        else:
+            # INT4 packed format
+            tensor, _ = self._load_int4(path)
+            return tensor.reshape(shape).astype(np.float32)
 
     def _load_int4(self, path: str) -> Tuple[np.ndarray, tuple]:
         """Load and dequantize an INT4 .symb file."""
@@ -254,8 +274,14 @@ class SymbioticStateEngine:
         self, x: np.ndarray, layer_idx: int, layer: "LayerWeights"
     ) -> np.ndarray:
         """
-        Standard dot-product attention for full-attention layers.
-        Uses the M matrix as a simple KV accumulator for single-token inference.
+        Full attention layers executed through the Symbiotic M matrix.
+        
+        SYNAXIM paradigm: ALL layers use the O(1) persistent memory matrix.
+        For full-attention layers, we use Q/K/V projections to compute a
+        gated associative update — same M matrix paradigm, but with the
+        model's trained Q/K/V weights providing richer gating signals.
+        
+        No KV cache. No growing memory. O(1) fixed state.
         """
         cfg = self.config
         D = cfg.hidden_size
@@ -263,40 +289,77 @@ class SymbioticStateEngine:
         n_kv = cfg.num_key_value_heads
         head_dim = cfg.head_dim
 
-        # Project to Q, K, V
-        W_q = layer.get_weight("attn_q")  # (n_heads * head_dim, D)
-        W_k = layer.get_weight("attn_k")  # (n_kv * head_dim, D)
-        W_v = layer.get_weight("attn_v")  # (n_kv * head_dim, D)
-        W_o = layer.get_weight("attn_o")  # (D, n_heads * head_dim)
+        W_q = layer.get_weight("attn_q")
+        W_k = layer.get_weight("attn_k")
+        W_v = layer.get_weight("attn_v")
+        W_o = layer.get_weight("attn_o")
 
         x_flat = x.flatten()
 
-        q = (x_flat @ W_q.T).reshape(n_heads, head_dim)
-        k = (x_flat @ W_k.T).reshape(n_kv, head_dim)
-        v = (x_flat @ W_v.T).reshape(n_kv, head_dim)
+        q = (x_flat @ W_q.T)
+        k = (x_flat @ W_k.T)
+        v = (x_flat @ W_v.T)
 
-        # Apply RoPE
-        q, k = self._apply_rope(q, k, self._position)
+        # Apply biases if present
+        if hasattr(layer, 'attn_biases'):
+            if "attn_q_bias" in layer.attn_biases:
+                q = q + layer.attn_biases["attn_q_bias"]
+            if "attn_k_bias" in layer.attn_biases:
+                k = k + layer.attn_biases["attn_k_bias"]
+            if "attn_v_bias" in layer.attn_biases:
+                v = v + layer.attn_biases["attn_v_bias"]
 
-        # For single-token generation, attention simplifies to:
-        # output = softmax(Q·K^T / sqrt(d)) · V
-        # With GQA: repeat KV heads to match Q heads
+        # Apply RoPE for positional encoding
+        q_heads = q.reshape(n_heads, head_dim)
+        k_heads = k.reshape(n_kv, head_dim)
+        q_heads, k_heads = self._apply_rope(q_heads, k_heads, self._position)
+        q = q_heads.reshape(-1)
+        k = k_heads.reshape(-1)
+
+        # ── Symbiotic M-matrix attention (O(1) memory) ──
+        # Gate: sigmoid(mean Q·K score) controls retention vs imprint
+        # This replaces the growing KV cache with a fixed-size associative memory
+        M = self.M[layer_idx]
+
+        # Reshape for per-head computation
+        q_h = q.reshape(n_heads, head_dim)      # (n_heads, head_dim)
+        k_h = k.reshape(n_kv, head_dim)          # (n_kv, head_dim)
+        v_h = v.reshape(n_kv, head_dim)          # (n_kv, head_dim)
+
+        # GQA: repeat KV heads to match Q heads
         if n_kv < n_heads:
             repeat = n_heads // n_kv
-            k = np.repeat(k, repeat, axis=0)
-            v = np.repeat(v, repeat, axis=0)
+            k_h = np.repeat(k_h, repeat, axis=0)  # (n_heads, head_dim)
+            v_h = np.repeat(v_h, repeat, axis=0)
 
-        # Scaled dot product (single query against single key)
+        # Gate score: mean of per-head Q·K similarity
         scale = 1.0 / math.sqrt(head_dim)
-        attn_score = np.sum(q * k, axis=-1) * scale  # (n_heads,)
-        attn_weight = self._softmax(attn_score)       # (n_heads,)
+        per_head_scores = np.sum(q_h * k_h, axis=-1) * scale  # (n_heads,)
+        gate_score = np.mean(per_head_scores)
+        gate = self._sigmoid(np.array([gate_score]))[0]
 
-        # Weighted sum of values
-        out = (attn_weight[:, None] * v)  # (n_heads, head_dim)
-        out = out.reshape(-1)             # (n_heads * head_dim,)
+        # Project back to D-space for M matrix operations
+        # Use output projection dimensions: M is (D, D)
+        # Key signal for imprint, Value signal for retrieval target
+        k_flat = k_h.reshape(-1)  # (n_heads * head_dim,) = (D,) for Q-dim models
+        v_flat = v_h.reshape(-1)
 
-        # Output projection
-        result = out @ W_o.T
+        # Normalize to prevent magnitude explosion
+        k_norm = k_flat / (np.linalg.norm(k_flat) + 1e-8)
+        v_norm = v_flat / (np.linalg.norm(v_flat) + 1e-8) * np.linalg.norm(x_flat)
+
+        # Imprint: outer product (associative binding of key→value)
+        imprint = np.outer(k_norm, v_norm)
+
+        # Gated memory update: M = gate * M + (1 - gate) * imprint
+        self.M[layer_idx] = gate * M + (1.0 - gate) * imprint
+
+        # Retrieve: project query through updated memory
+        q_flat = q_h.reshape(-1)
+        output = q_flat @ self.M[layer_idx]
+
+        # Output projection: (n_heads * head_dim,) @ W_o.T → (D,)
+        result = output @ W_o.T
         return result.reshape(x.shape)
 
     # ══════════════════════════════════════════════════════════
@@ -456,6 +519,15 @@ class LayerWeights:
             self.norm_mlp = np.fromfile(norm_mlp_path, dtype=np.float16).astype(np.float32)
         else:
             self.norm_mlp = np.ones(D, dtype=np.float32)
+
+        # Load optional attention biases (e.g., Qwen models)
+        self.attn_biases: dict = {}
+        for bias_name in ("attn_q_bias", "attn_k_bias", "attn_v_bias"):
+            bias_path = os.path.join(layer_dir, f"{bias_name}.symb")
+            if os.path.exists(bias_path):
+                self.attn_biases[bias_name] = np.fromfile(
+                    bias_path, dtype=np.float16
+                ).astype(np.float32)
 
     def get_weight(self, name: str) -> np.ndarray:
         """

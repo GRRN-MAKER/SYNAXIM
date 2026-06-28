@@ -44,6 +44,10 @@ WEIGHT_MAP = {
     "self_attn.k_proj.weight": "attn_k",
     "self_attn.v_proj.weight": "attn_v",
     "self_attn.o_proj.weight": "attn_o",
+    # Attention biases (Qwen, etc.)
+    "self_attn.q_proj.bias": "attn_q_bias",
+    "self_attn.k_proj.bias": "attn_k_bias",
+    "self_attn.v_proj.bias": "attn_v_bias",
     # Fused QKV (some models)
     "self_attn.qkv_proj.weight": "attn_qkv",
     # Per-layer MLP (dense)
@@ -138,6 +142,33 @@ class SymbioticConverter:
         if self.verbose:
             print(f"[SYNAXIM-Convert] {msg}")
 
+    @staticmethod
+    def _load_safetensors(filepath: str) -> Dict[str, np.ndarray]:
+        """
+        Load a safetensors file into a dict of NumPy float32 arrays.
+        Handles bfloat16 (unsupported by NumPy) by falling back to PyTorch.
+        """
+        from safetensors import safe_open
+        try:
+            result = {}
+            with safe_open(filepath, framework="numpy") as f:
+                for key in f.keys():
+                    t = f.get_tensor(key)
+                    result[key] = t.astype(np.float32) if t.dtype != np.float32 else t
+            return result
+        except TypeError:
+            # bfloat16 → use PyTorch to load and convert
+            try:
+                import torch
+                from safetensors.torch import load_file as torch_load_file
+                torch_dict = torch_load_file(filepath)
+                return {k: v.float().numpy() for k, v in torch_dict.items()}
+            except ImportError:
+                raise RuntimeError(
+                    "Model uses bfloat16 weights which NumPy cannot read directly. "
+                    "Install PyTorch to enable conversion: pip install torch"
+                )
+
     def _resolve_source(self, source: str) -> str:
         """Resolve a HF model ID or local path to a directory."""
         if os.path.isdir(source):
@@ -199,6 +230,9 @@ class SymbioticConverter:
                     layer_types.append("linear_attention")
                 else:
                     layer_types.append("full_attention")
+        else:
+            # Standard transformer — all layers are full attention
+            layer_types = ["full_attention"] * n_layers
         
         config = SymbioticConfig(
             model_name=source.split("/")[-1] if "/" in source else source,
@@ -275,8 +309,6 @@ class SymbioticConverter:
         self, model_dir: str, output_dir: str, config: SymbioticConfig
     ) -> None:
         """Convert all weights from safetensors to .symb format."""
-        from safetensors import safe_open
-
         # Find all safetensors files
         st_files = sorted(Path(model_dir).glob("*.safetensors"))
         if not st_files:
@@ -290,9 +322,12 @@ class SymbioticConverter:
         total_packed = 0
 
         for st_file in tqdm(st_files, desc="Converting shards", disable=not self.verbose):
-            with safe_open(str(st_file), framework="numpy") as f:
-                for key in f.keys():
-                    tensor = f.get_tensor(key)
+            # Try NumPy first; if bfloat16 (not supported by NumPy), load via PyTorch
+            tensors_dict = self._load_safetensors(str(st_file))
+            for key, tensor in tensors_dict.items():
+                    # Ensure float32 for quantization
+                    if tensor.dtype != np.float32:
+                        tensor = tensor.astype(np.float32)
                     total_params += tensor.size
 
                     # Determine output path
@@ -303,9 +338,18 @@ class SymbioticConverter:
 
                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
+                    # Determine packing method:
+                    # - 1D tensors (biases, norms): always FP16 (small)
+                    # - final_norm: always FP16 (tiny)
+                    # - Embeddings/lm_head: use selected quant (can be large)
+                    is_1d = (tensor.ndim == 1)
+                    basename = os.path.basename(out_path).replace(".symb", "")
+                    is_norm = basename in ("final_norm",)
+                    pack_method = "fp16" if (is_1d or is_norm) else quant_method
+
                     # Pack the weight based on quantization method
                     packed_size = self._pack_weight(
-                        tensor, out_path, quant_method, group_size
+                        tensor, out_path, pack_method, group_size
                     )
                     total_packed += packed_size
 
