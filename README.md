@@ -81,7 +81,7 @@ HuggingFace Model  →  grrn-convert  →  .symb Files  →  SYNAXIM Engine  →
 
 ## 🚀 Try It Now — Pre-Converted Model Available
 
-**Don't want to convert a model yourself?** We have a ready-to-run `.symb` model on HuggingFace:
+** You want to try before you convert your model?** We have a ready-to-run `.symb` model on HuggingFace:
 
 > **[🤗 GRRNNOB/SYNAXIM](https://huggingface.co/GRRNNOB/SYNAXIM)** — Llama 3.2 1B converted to `.symb` INT4 (674 MB)
 
