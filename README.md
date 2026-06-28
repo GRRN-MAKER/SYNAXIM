@@ -70,7 +70,7 @@ HuggingFace Model  →  grrn-convert  →  .symb Files  →  SYNAXIM Engine  →
 | Feature | HuggingFace Transformers | vLLM | **SYNAXIM** |
 |---------|------------------------|------|-------------|
 | Runtime dependency | PyTorch + CUDA | PyTorch + CUDA + Ray | **Zero framework** (NumPy only) |
-| Memory model | KV-Cache (grows with context) | PagedAttention KV | **O(1) M matrix** (fixed, infinite context) |
+| Memory model | KV-Cache (grows with context) | PagedAttention KV | **O(1) M matrix** (fixed, infinite context) proprietary |
 | Weight format | safetensors (open, anyone reads) | safetensors | **`.symb` (proprietary INT4 bitpacked)** |
 | Quantization | bitsandbytes / GPTQ / AWQ | AWQ / GPTQ | **Native INT4** (built into engine) |
 | CPU execution | Python GIL bottleneck | Not supported | **Numba LLVM → native AVX-512/NEON SIMD** |
