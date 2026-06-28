@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/SYNAXIM-v0.1.0-blueviolet?style=for-the-badge" alt="SYNAXIM">
+  <img src="https://img.shields.io/badge/SYNAXIM-v0.1.1-blueviolet?style=for-the-badge" alt="SYNAXIM">
 </p>
 
 <h1 align="center">S Y N A X I M</h1>
@@ -79,8 +79,66 @@ HuggingFace Model  →  grrn-convert  →  .symb Files  →  SYNAXIM Engine  →
 
 ---
 
+## 🚀 Try It Now — Pre-Converted Model Available
+
+**Don't want to convert a model yourself?** We have a ready-to-run `.symb` model on HuggingFace:
+
+> **[🤗 GRRNNOB/SYNAXIM](https://huggingface.co/GRRNNOB/SYNAXIM)** — Llama 3.2 1B converted to `.symb` INT4 (674 MB)
+
+Download and run in 3 commands:
+
+```bash
+# 1. Install SYNAXIM
+pip install grrn-inference
+
+# 2. Download the pre-converted model (674 MB)
+pip install huggingface-hub
+huggingface-cli download GRRNNOB/SYNAXIM --local-dir ./llama-1b-symb
+```
+
+```python
+# 3. Run inference — no PyTorch, no Transformers, no KV-Cache
+from grrn_inference import GRRNModel
+
+model = GRRNModel.from_pretrained("./llama-1b-symb")
+
+# Generate text
+result = model.generate("The meaning of life is", max_tokens=50, temperature=0.7)
+print(result.text)
+print(f"Speed: {result.tokens_per_second} tok/s")
+
+# Chat (OpenAI-style)
+result = model.chat([
+    {"role": "user", "content": "What is 2+2?"}
+], max_tokens=100)
+print(result.choices[0].message["content"])
+
+# Stream tokens
+for chunk in model.stream("Once upon a time", max_tokens=50):
+    print(chunk.text, end="", flush=True)
+
+# Serve as OpenAI API
+from grrn_inference import serve
+serve("./llama-1b-symb", port=8000, api_key="my-key")
+```
+
+| Detail | Value |
+|--------|-------|
+| **Model** | Llama 3.2 1B (Meta) |
+| **Format** | `.symb` INT4 bitpacked |
+| **Size** | 674 MB (3.8× compressed from 2.5 GB) |
+| **Layers** | 16, D=2048, GQA 32Q/8KV |
+| **RAM Required** | ~4 GB |
+| **GPU Required** | ❌ No — runs on CPU only |
+| **Dependencies** | `numpy`, `safetensors`, `tqdm` (< 5 MB) |
+
+> ⚠️ **Note**: This is a test release demonstrating the SYNAXIM engine pipeline. The model was trained with standard attention (KV-cache) but runs through SYNAXIM's O(1) Symbiotic Gate. Output quality from converted standard models will differ from their original behavior — this is by design. Future releases will include models trained specifically for the Symbiotic paradigm.
+
+---
+
 ## Table of Contents
 
+- [Try It Now — Pre-Converted Model](#-try-it-now--pre-converted-model-available)
 - [What is SYNAXIM?](#what-is-synaxim)
 - [Why SYNAXIM Instead of Transformers?](#why-synaxim-instead-of-transformers)
 - [Installation](#installation)
