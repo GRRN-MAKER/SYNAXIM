@@ -186,13 +186,14 @@ class GRRNServer:
     def _handle_chat(self, req: ChatCompletionRequest) -> dict:
         """Handle a chat completion request."""
         from .sampling import SamplingParams, TokenSampler
+        from . import _sanitize_for_chat_template
 
         t0 = time.time()
         model = self._model
         tokenizer = self._tokenizer
 
-        # Apply chat template
-        messages = [{"role": m.role, "content": m.content} for m in req.messages]
+        # Sanitize + apply chat template
+        messages = [{"role": m.role, "content": _sanitize_for_chat_template(m.content)} for m in req.messages]
         prompt_text = tokenizer.apply_chat_template(messages, add_generation_prompt=True)
         prompt_ids = tokenizer.encode(prompt_text)
 
@@ -261,12 +262,13 @@ class GRRNServer:
     def _handle_completion(self, req: CompletionRequest) -> dict:
         """Handle a text completion request."""
         from .sampling import SamplingParams, TokenSampler
+        from . import _sanitize_for_chat_template
 
         t0 = time.time()
         model = self._model
         tokenizer = self._tokenizer
 
-        prompt_ids = tokenizer.encode(req.prompt)
+        prompt_ids = tokenizer.encode(_sanitize_for_chat_template(req.prompt))
 
         params = SamplingParams(
             temperature=req.temperature,

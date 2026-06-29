@@ -205,6 +205,61 @@ class TestSampling:
         assert t1 == t2, f"Same seed should give same result: {t1} vs {t2}"
 
 
+class TestSanitizer:
+    """Test _sanitize_for_chat_template input sanitization."""
+
+    def test_normal_text_unchanged(self):
+        """Normal text should pass through unchanged."""
+        from grrn_inference import _sanitize_for_chat_template
+        text = "Hello, how are you doing today?"
+        assert _sanitize_for_chat_template(text) == text
+
+    def test_strips_html(self):
+        """HTML tags should be stripped."""
+        from grrn_inference import _sanitize_for_chat_template
+        text = "<script>alert('xss')</script>Hello"
+        result = _sanitize_for_chat_template(text)
+        assert "<script>" not in result
+        assert "Hello" in result
+
+    def test_neutralizes_jinja2(self):
+        """Jinja2 template injection should be neutralized."""
+        from grrn_inference import _sanitize_for_chat_template
+        text = "{{ config.__class__.__init__.__globals__ }}"
+        result = _sanitize_for_chat_template(text)
+        assert "{{" not in result
+        assert "}}" not in result
+
+    def test_truncates_word_repetition(self):
+        """Repeated words (4+) should be truncated."""
+        from grrn_inference import _sanitize_for_chat_template
+        text = "the the the the the the the end"
+        result = _sanitize_for_chat_template(text)
+        count = result.lower().split().count("the")
+        assert count <= 4, f"Expected <= 4 'the', got {count}"
+
+    def test_collapses_whitespace(self):
+        """Multiple whitespace should be collapsed."""
+        from grrn_inference import _sanitize_for_chat_template
+        text = "hello    world\n\n\nfoo"
+        result = _sanitize_for_chat_template(text)
+        assert "    " not in result
+        assert "\n\n" not in result
+
+    def test_length_cap(self):
+        """Text longer than 32000 chars should be capped."""
+        from grrn_inference import _sanitize_for_chat_template
+        text = "a" * 50000
+        result = _sanitize_for_chat_template(text)
+        assert len(result) <= 32000
+
+    def test_non_string_input(self):
+        """Non-string input should be converted."""
+        from grrn_inference import _sanitize_for_chat_template
+        result = _sanitize_for_chat_template(12345)
+        assert result == "12345"
+
+
 class TestConfig:
     """Test SymbioticConfig extended functionality."""
 

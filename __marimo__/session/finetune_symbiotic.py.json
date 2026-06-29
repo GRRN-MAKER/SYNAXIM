@@ -1,0 +1,177 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.23.11",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "2646154b906c80bf039fa1e836cfaa75",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"synaxim-symbiotic-gate-fine-tuning\">\ud83e\uddec SYNAXIM \u2014 Symbiotic Gate Fine-Tuning</h1>\n<span class=\"paragraph\"><strong>Goal</strong>: Fine-tune Llama 3.2 1B so it produces coherent text through the Symbiotic Gate.</span>\n<span class=\"paragraph\"><strong>Method</strong>: Knowledge distillation \u2014 use the standard attention outputs as teacher, \ntrain the model to produce similar outputs through the O(1) M-matrix gate.</span>\n<span class=\"paragraph\"><strong>Steps</strong>:</span>\n<ol>\n<li>Load Llama 3.2 1B (standard PyTorch)</li>\n<li>Generate teacher hidden states with standard attention</li>\n<li>Train a gate adapter to make Symbiotic Gate match teacher</li>\n<li>Export adapted weights to <code>.symb</code> format</li>\n<li>Push to HuggingFace</li>\n</ol></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "b42d615b5772ee49a6a07626638de8cf",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "PyTorch: 2.2.2\nCUDA: False\nRunning on CPU \u2014 training will be slow but works\nDevice: cpu\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "vblA",
+      "code_hash": "b03e337fa0842cf63d60536335b3953f",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "/usr/local/bin/python3\n2.2.2\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "595932e35053d6edf899832be25ac198",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "Loading unsloth/Llama-3.2-1B...\n",
+          "mimetype": "text/plain"
+        },
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "`torch_dtype` is deprecated! Use `dtype` instead!\n",
+          "mimetype": "text/plain"
+        },
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "Loaded: 16 layers, D=2048, 32Q/8KV, head_dim=64\nDevice: cpu\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "5ca7085949a796623af99327f3354ead",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "Generating teacher hidden states for 40 sequences...\n  Processed 10/40\n  Processed 20/40\n  Processed 30/40\n  Processed 40/40\nTeacher data generated: 40 samples\n",
+          "mimetype": "text/plain"
+        },
+        {
+          "type": "stream",
+          "name": "stderr",
+          "text": "The following generation flags are not valid and may be ignored: ['temperature', 'top_p']. Set `TRANSFORMERS_VERBOSITY=info` for more details.\n",
+          "mimetype": "text/plain"
+        },
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "\nTeacher output (standard attention):\n  'Hello, how are you? I am a 22 year old girl from the Netherlands. I am a student and I am'\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "PKri",
+      "code_hash": "95e9be537e7d5362c8713ae02086002e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "Symbiotic Gate Adapter: 32,816 trainable parameters\n  gate_bias:    16 \u00d7 1\n  gate_scale:   16 \u00d7 1\n  output_scale: 16 \u00d7 2048\n  mix_alpha:    16 \u00d7 1\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "Xref",
+      "code_hash": "c29fc51744f9f952df11d5b5a54f9def",
+      "outputs": [],
+      "console": [
+        {
+          "type": "stream",
+          "name": "stdout",
+          "text": "Training adapter for 30 epochs on 40 samples...\n\n",
+          "mimetype": "text/plain"
+        }
+      ]
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "a487291c7525247e8f6d7e56ac36a43f",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "51cac27085ef93ee94de64bd16992097",
+      "outputs": [],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "6c53e4ac2a896d94e0f2d051f621c029",
+      "outputs": [],
+      "console": []
+    }
+  ]
+}

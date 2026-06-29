@@ -43,11 +43,67 @@ def _print_synaxim_banner():
 _print_synaxim_banner()
 
 import os
+import re
 import time
 from dataclasses import dataclass, field
 from typing import List, Optional, Iterator
 
 from .config import SymbioticConfig
+
+
+def _sanitize_for_chat_template(text: str) -> str:
+    """
+    Sanitize input text before passing to the inference engine.
+    Prevents Jinja2 template injection, formatting errors, and repetition loops.
+    
+    Applied automatically to all generate(), chat(), and stream() inputs.
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    # Strip HTML/CSS artifacts
+    text = re.sub(r'<[^>]+>', '', text)
+    # Neutralize Jinja2 template injection
+    text = text.replace('{{', '{ {').replace('}}', '} }')
+    text = text.replace('{%', '{ %').replace('%}', '% }')
+    # Collapse repeated whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    # Detect and truncate word-level repetition (same word 4+ times in a row)
+    words = text.split()
+    if len(words) > 3:
+        cleaned = [words[0]]
+        repeat_count = 0
+        for i in range(1, len(words)):
+            if words[i].lower() == words[i-1].lower():
+                repeat_count += 1
+                if repeat_count >= 3:
+                    continue
+            else:
+                repeat_count = 0
+            cleaned.append(words[i])
+        text = ' '.join(cleaned)
+    # Detect phrase-level repetition (same 3+ word phrase repeated 3+ times)
+    if len(words) > 9:
+        for phrase_len in range(3, min(8, len(words) // 3)):
+            for start in range(len(words) - phrase_len * 2):
+                phrase = ' '.join(words[start:start + phrase_len]).lower()
+                count = 0
+                pos = start
+                while pos + phrase_len <= len(words):
+                    candidate = ' '.join(words[pos:pos + phrase_len]).lower()
+                    if candidate == phrase:
+                        count += 1
+                        pos += phrase_len
+                    else:
+                        break
+                if count >= 3:
+                    # Truncate: keep first occurrence only
+                    text = ' '.join(words[:start + phrase_len]) + ' ' + ' '.join(words[start + phrase_len * count:])
+                    words = text.split()
+                    break
+    # Hard length cap (prevent memory bombs)
+    if len(text) > 32000:
+        text = text[:32000]
+    return text.strip()
 from .export import SymbioticConverter
 from .sampling import SamplingParams, TokenSampler
 
@@ -194,6 +250,9 @@ class GRRNModel:
         """
         t0 = time.time()
 
+        # Sanitize input to prevent repetition/injection
+        prompt = _sanitize_for_chat_template(prompt)
+
         # Encode prompt
         prompt_ids = self.tokenizer.encode(prompt)
 
@@ -268,6 +327,12 @@ class GRRNModel:
         Returns:
             ChatCompletionResult with assistant response
         """
+        # Sanitize all message contents
+        messages = [
+            {**m, "content": _sanitize_for_chat_template(m.get("content", ""))}
+            for m in messages
+        ]
+
         # Apply chat template
         prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True)
 
@@ -313,6 +378,9 @@ class GRRNModel:
             for chunk in model.stream("Once upon a time"):
                 print(chunk.text, end="", flush=True)
         """
+        # Sanitize input
+        prompt = _sanitize_for_chat_template(prompt)
+
         prompt_ids = self.tokenizer.encode(prompt)
 
         params = SamplingParams(
@@ -376,4 +444,5 @@ __all__ = [
     "ChatCompletionResult",
     "StreamChunk",
     "serve",
+    "_sanitize_for_chat_template",
 ]
